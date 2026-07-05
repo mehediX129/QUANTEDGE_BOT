@@ -6,10 +6,11 @@ Run this file to start the bot: python main.py
 """
 
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
-# Add the project root to Python path (in case it's not already there)
+# Add project root to Python path
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -21,13 +22,11 @@ from config.settings import (
     PORTFOLIO_SIZE,
     PRIMARY_TIMEFRAME,
 )
+from data.collector import DataCollector
 
 
 def display_startup_banner():
-    """
-    Display a nice startup banner in the console.
-    This is just for visual appeal and information.
-    """
+    """Display a nice startup banner in the console."""
     banner = f"""
 ╔══════════════════════════════════════════════╗
 ║         QUANTEDGE TRADING BOT v1.0          ║
@@ -42,11 +41,59 @@ def display_startup_banner():
     print(banner)
 
 
+def test_exchange_connection(collector: DataCollector):
+    """
+    Test the exchange connection and display market data.
+    
+    This function:
+    1. Checks if exchange is online
+    2. Fetches current prices for all symbols
+    3. Fetches recent OHLCV data
+    4. Displays a summary
+    """
+    
+    log.info("--- Exchange Connection Test ---")
+    
+    # Test 1: Exchange Status
+    log.info("Test 1: Checking exchange status...")
+    if collector.check_exchange_status():
+        log.success("✓ Exchange is online!")
+    else:
+        log.error("✗ Exchange appears to be offline")
+        return
+    
+    # Test 2: Current Prices
+    log.info("Test 2: Fetching current prices...")
+    prices = collector.get_all_prices()
+    
+    print("\n" + "="*50)
+    print("  CURRENT MARKET PRICES")
+    print("="*50)
+    for symbol, price in prices.items():
+        if price:
+            print(f"  {symbol:<12} : ${price:>12,.2f}")
+        else:
+            print(f"  {symbol:<12} : ERROR FETCHING")
+    print("="*50 + "\n")
+    
+    # Test 3: OHLCV Data
+    log.info("Test 3: Fetching OHLCV data...")
+    for symbol in SYMBOLS[:2]:  # Test only first 2 symbols to save time
+        df = collector.fetch_ohlcv(symbol, limit=5)
+        if df is not None:
+            log.success(f"✓ {symbol}: Got {len(df)} candles")
+            latest = df.iloc[-1]
+            log.info(f"  Latest {symbol} candle: Open=${latest['open']:.2f}, "
+                    f"High=${latest['high']:.2f}, Low=${latest['low']:.2f}, "
+                    f"Close=${latest['close']:.2f}")
+        else:
+            log.error(f"✗ {symbol}: Failed to fetch OHLCV")
+    
+    log.info("--- Connection Test Complete ---")
+
+
 def main():
-    """
-    Main function that starts the trading bot.
-    This is the entry point of the entire application.
-    """
+    """Main function that starts the trading bot."""
     
     # Step 1: Show startup banner
     display_startup_banner()
@@ -64,32 +111,40 @@ def main():
     log.info("Validating configuration...")
     
     if not SYMBOLS:
-        log.error("No trading symbols configured! Please add symbols in config/settings.py")
+        log.error("No trading symbols configured!")
         sys.exit(1)
     
     if TRADING_MODE not in ["paper", "live"]:
-        log.error(f"Invalid TRADING_MODE: {TRADING_MODE}. Must be 'paper' or 'live'")
+        log.error(f"Invalid TRADING_MODE: {TRADING_MODE}")
         sys.exit(1)
     
-    log.success("Configuration validated successfully!")
+    log.success("Configuration validated!")
     
-    # Step 4: Ready for trading
-    log.info("Bot is ready to start trading.")
-    log.info("(Trading engine will be implemented in future chapters)")
-    log.info("-" * 50)
+    # Step 4: Initialize DataCollector
+    log.info("Initializing exchange connection...")
+    try:
+        collector = DataCollector()
+        log.success("Exchange connection established!")
+    except Exception as e:
+        log.error(f"Failed to connect to exchange: {e}")
+        log.error("Please check:")
+        log.error("  1. API keys in .env file are correct")
+        log.error("  2. Internet connection is working")
+        log.error("  3. Binance is not down")
+        sys.exit(1)
     
-    # Step 5: Placeholder for future trading loop
-    # We will add the actual trading logic in later chapters
-    log.info("Press Ctrl+C to stop the bot.")
+    # Step 5: Run connection test
+    test_exchange_connection(collector)
+    
+    # Step 6: Main loop
+    log.info("Bot is ready for trading operations.")
+    log.info("(Full trading logic coming in future chapters)")
+    log.info("Press Ctrl+C to stop.\n")
     
     try:
-        # This is where the main trading loop will go
-        # For now, we just keep the program running
         while True:
-            # We'll implement actual trading in Chapter 3
-            log.debug("Bot is alive and waiting...")
-            import time
-            time.sleep(60)  # Wait 60 seconds
+            log.debug("Bot heartbeat...")
+            time.sleep(60)
     except KeyboardInterrupt:
         log.info("")
         log.info("Shutdown signal received (Ctrl+C)")
@@ -98,14 +153,5 @@ def main():
         sys.exit(0)
 
 
-# ------------------------------------------------------------------
-# Python special variable __name__
-# ------------------------------------------------------------------
-# When you run: python main.py
-# Python sets __name__ = "__main__" for this file
-# But if you import this file from another file, __name__ = "main"
-# 
-# This if-statement ensures main() only runs when this file
-# is executed directly, not when imported.
 if __name__ == "__main__":
     main()
