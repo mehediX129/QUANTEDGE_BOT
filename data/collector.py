@@ -215,7 +215,10 @@ class DataCollector:
             # ------------------------------------------------------------------
             # Convert millisecond timestamp to datetime
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-            
+
+            # Set timestamp as index for VWAP compatibility
+            df.set_index("timestamp", inplace=True)
+
             # Add symbol column (helpful when combining multiple symbols)
             df["symbol"] = symbol
             
@@ -223,6 +226,9 @@ class DataCollector:
             df = df.sort_values("timestamp").reset_index(drop=True)
             
             log.debug(f"Fetched {len(df)} candles for {symbol} ({timeframe})")
+            
+            # Reset index so timestamp is a column again for other code
+            df.reset_index(inplace=True)
             
             return df
             
