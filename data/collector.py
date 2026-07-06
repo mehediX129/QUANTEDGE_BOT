@@ -216,19 +216,16 @@ class DataCollector:
             # Convert millisecond timestamp to datetime
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
 
-            # Set timestamp as index for VWAP compatibility
-            df.set_index("timestamp", inplace=True)
-
-            # Add symbol column (helpful when combining multiple symbols)
+            # Add symbol column
             df["symbol"] = symbol
             
             # Sort by timestamp (oldest first)
-            df = df.sort_values("timestamp").reset_index(drop=True)
+            df = df.sort_values("timestamp")
+            
+            # Reset index (0, 1, 2, ...) — timestamp stays as regular column
+            df = df.reset_index(drop=True)
             
             log.debug(f"Fetched {len(df)} candles for {symbol} ({timeframe})")
-            
-            # Reset index so timestamp is a column again for other code
-            df.reset_index(inplace=True)
             
             return df
             
@@ -243,7 +240,7 @@ class DataCollector:
     def fetch_all_ohlcv(
         self,
         timeframe: str = None,
-        limit: int = 100
+        limit: int = 1000
     ) -> Dict[str, pd.DataFrame]:
         """
         Fetch OHLCV data for all configured symbols.

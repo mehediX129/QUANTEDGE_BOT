@@ -37,7 +37,7 @@ class TechnicalIndicators:
         divergence = TechnicalIndicators.detect_divergence(df, "RSI")
     """
     
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
     # MASTER METHOD: Add all indicators at once
     # ------------------------------------------------------------------
     
@@ -45,13 +45,25 @@ class TechnicalIndicators:
     def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
         """
         Add ALL technical indicators to the DataFrame.
-        """
-        df = df.copy()
         
-        # --- FIX: Ensure timestamp is datetime and set as index temporarily ---
+        This is the main method you'll call most of the time.
+        It adds 15+ indicators in one shot.
+        
+        Args:
+            df: DataFrame with columns [timestamp, open, high, low, close, volume]
+        
+        Returns:
+            Same DataFrame with additional indicator columns
+        """
+        df = df.copy()  # Work on copy to avoid modifying original
+        
+        # --- Ensure timestamp is datetime type ---
         if "timestamp" in df.columns:
             if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
                 df["timestamp"] = pd.to_datetime(df["timestamp"])
+        elif df.index.name == "timestamp" or isinstance(df.index, pd.DatetimeIndex):
+            # Timestamp is currently the index, reset it to become a column
+            df = df.reset_index()
         
         # --- Moving Averages ---
         df = TechnicalIndicators.add_ema(df)
