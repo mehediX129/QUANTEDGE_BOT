@@ -250,9 +250,63 @@ def scan_for_signals(collector, strategy, risk_manager):
     
     return signals_found
 
+# ==================================================================
+# FUNCTION 3: test_order_executor()
+# ==================================================================
+
+def test_order_executor():
+    """
+    Test the Order Executor with a small paper trade.
+    
+    This function:
+    1. Creates an OrderExecutor instance
+    2. Checks account balance
+    3. Checks BTC price
+    4. Calculates minimum buyable quantity
+    5. Does NOT actually place an order (safety first)
+    
+    Run separately: python -c "from main import test_order_executor; test_order_executor()"
+    """
+    from execution.order_executor import OrderExecutor
+    
+    log.info("=" * 50)
+    log.info("ORDER EXECUTOR TEST")
+    log.info("=" * 50)
+    
+    executor = OrderExecutor()
+    
+    # Test 1: Get Balance
+    usdt_balance = executor.get_balance("USDT")
+    log.info(f"📊 USDT Balance: ${usdt_balance:.2f}")
+    
+    # Test 2: Get Price
+    btc_price = executor.get_current_price("BTC/USDT")
+    log.info(f"📊 BTC Price: ${btc_price:,.2f}")
+    
+    # Test 3: Symbol Info
+    info = executor._get_symbol_info("BTC/USDT")
+    log.info(f"📊 BTC/USDT Info:")
+    log.info(f"    Min Amount: {info['min_amount']}")
+    log.info(f"    Min Notional: ${info['min_notional']}")
+    log.info(f"    Amount Precision: {info['amount_precision']}")
+    
+    # Test 4: Calculate minimum buy
+    if btc_price and usdt_balance:
+        min_btc = info['min_notional'] / btc_price
+        log.info(f"📊 Minimum BTC buyable: {min_btc:.6f} BTC")
+        log.info(f"📊 Maximum BTC buyable: {(usdt_balance * 0.98 / btc_price):.6f} BTC")
+    
+    # Test 5: Quantity rounding
+    raw_qty = 0.123456789
+    rounded = executor._round_quantity(raw_qty, info['amount_precision'])
+    log.info(f"📊 Rounding test: {raw_qty} → {rounded}")
+    
+    log.info("=" * 50)
+    log.info("ORDER EXECUTOR TEST COMPLETE")
+    log.info("=" * 50)
 
 # ==================================================================
-# FUNCTION 3: main()
+# FUNCTION 4: main()
 # ==================================================================
 
 def main():
@@ -331,6 +385,14 @@ def main():
     # ------------------------------------------------------------------
     risk_manager = RiskManager()
     log.success("Risk Manager initialized")
+
+    # ------------------------------------------------------------------
+    # STEP 7.5: Test Order Executor (PAPER MODE ONLY)
+    # ------------------------------------------------------------------
+    if TRADING_MODE == "paper":
+        log.info("")
+        test_order_executor()
+        log.info("")
     
     # ------------------------------------------------------------------
     # STEP 8: All systems go — run first scan
