@@ -21,6 +21,7 @@ import numpy as np
 import pandas_ta as ta
 from typing import Optional
 from utils.logger import log
+import warnings
 
 
 class TechnicalIndicators:
@@ -367,7 +368,12 @@ class TechnicalIndicators:
         - VWAP: Volume Weighted Average Price
         - Above_VWAP: True if close > VWAP
         """
+        
+        # Suppress VWAP warning from pandas-ta
+        warnings.filterwarnings("ignore", message=".*VWAP requires.*")
+
         # VWAP requires DatetimeIndex - set it temporarily
+        original_index = None
         if not isinstance(df.index, pd.DatetimeIndex):
             original_index = df.index.copy()
             df = df.copy()
