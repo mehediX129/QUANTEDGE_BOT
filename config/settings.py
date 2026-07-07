@@ -82,15 +82,20 @@ TP_RISK_REWARD_RATIO = float(os.getenv("TP_RISK_REWARD_RATIO", "2.5"))
 # ------------------------------------------------------------------
 # STEP 5: Strategy Parameters
 # ------------------------------------------------------------------
+# These are the OPTIMIZED parameters from backtesting (Chapter 7).
+# Updated from original (RSI<35, Vol>1.5x, ADX>20) to:
+# RSI<45, Vol>1.0x, ADX>15 — based on parameter sweep results.
 STRATEGY_CONFIG = {
     "ema_fast": 20,
     "ema_slow": 50,
     "rsi_period": 14,
-    "rsi_oversold": 35,
-    "rsi_overbought": 65,
+    "rsi_buy_zone": 45,              # Optimized from 35
+    "rsi_sell_zone": 70,
     "volume_ma_period": 20,
-    "volume_spike_multiplier": 1.5,
-    "adx_threshold": 20,
+    "volume_spike_multiplier": 1.0,  # Optimized from 1.5
+    "adx_threshold": 15,             # Optimized from 20
+    "atr_multiplier": 2.0,           # Now used by strategy
+    "risk_reward_ratio": 2.5,        # Now used by strategy
 }
 
 

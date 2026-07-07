@@ -37,7 +37,7 @@ class BaseStrategy(ABC):
         """
         self.name = name
         self.params = params or {}
-        log.info(f"Strategy '{self.name}' initialized with params: {self.params}")
+        log.debug(f"Strategy '{self.name}' initialized with params: {self.params}")
     
     @abstractmethod
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:

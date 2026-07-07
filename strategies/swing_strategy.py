@@ -36,15 +36,19 @@ class SwingStrategy(BaseStrategy):
     """
     
     def __init__(self):
+        # Load params from settings.py STRATEGY_CONFIG
+        from config.settings import STRATEGY_CONFIG
+        
         params = {
-            "ema_fast": 20,
-            "ema_slow": 50,
-            "rsi_period": 14,
-            "rsi_buy_zone": 35,       # Buy when RSI below this
-            "rsi_sell_zone": 70,      # Sell when RSI above this
-            "volume_multiplier": 1.5,  # Volume must be 1.5x average
-            "adx_min": 20,            # Minimum ADX for trending market
-            "risk_reward_ratio": 2.5, # Target RR ratio
+            "ema_fast": STRATEGY_CONFIG.get("ema_fast", 20),
+            "ema_slow": STRATEGY_CONFIG.get("ema_slow", 50),
+            "rsi_period": STRATEGY_CONFIG.get("rsi_period", 14),
+            "rsi_buy_zone": STRATEGY_CONFIG.get("rsi_buy_zone", 45),
+            "rsi_sell_zone": STRATEGY_CONFIG.get("rsi_sell_zone", 70),
+            "volume_multiplier": STRATEGY_CONFIG.get("volume_spike_multiplier", 1.0),
+            "adx_min": STRATEGY_CONFIG.get("adx_threshold", 15),
+            "risk_reward_ratio": STRATEGY_CONFIG.get("risk_reward_ratio", 2.5),
+            "atr_multiplier": STRATEGY_CONFIG.get("atr_multiplier", 2.0),
         }
         super().__init__("SwingCombo", params)
         self.indicators = TechnicalIndicators()
@@ -280,27 +284,17 @@ class SwingStrategy(BaseStrategy):
     def get_stop_loss(
         self, df: pd.DataFrame, index: int, entry_price: float
     ) -> float:
-        """
-        Calculate stop loss using ATR.
-        
-        Stop Loss = Entry Price - (ATR × Multiplier)
-        
-        We use 2.0x ATR to give the trade room to breathe.
-        95% of price action stays within 2 ATR of its mean.
-        """
+        """Calculate stop loss using ATR with multiplier from settings."""
         atr = df["ATR"].iloc[index]
+        atr_multiplier = self.params.get("atr_multiplier", 2.0)
         
         if pd.isna(atr) or atr <= 0:
-            # Fallback: Use recent swing low
             swing_low = df["Swing_Low"].iloc[index]
             if not pd.isna(swing_low) and swing_low < entry_price:
-                return swing_low * 0.995  # Just below swing low
-            return entry_price * 0.97  # Absolute fallback: 3%
+                return swing_low * 0.995
+            return entry_price * 0.97
         
-        atr_multiplier = 2.0
         stop_loss = entry_price - (atr * atr_multiplier)
-        
-        # Don't let stop be more than 10% away
         max_stop = entry_price * 0.90
         stop_loss = max(stop_loss, max_stop)
         

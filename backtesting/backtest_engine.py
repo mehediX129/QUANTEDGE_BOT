@@ -435,16 +435,21 @@ class BacktestEngine:
     
     def _calculate_sortino_ratio(self, equity_df: pd.DataFrame, df: pd.DataFrame) -> float:
         """
-        Calculate Annualized Sortino Ratio.
+        Calculate Annualized Sortino Ratio (Sortino & Price, 1994).
         
-        Sortino only penalizes DOWNSIDE volatility.
-        This is superior to Sharpe because investors don't mind upside volatility.
+        CORRECTED FORMULA (verified against CFA Institute standard):
         
-        Formula:
-            Sortino = (Rp - Rf) / σd × √(periods_per_year)
+        Sortino = (Rp - Rf) / σd × √(periods_per_year)
         
         Where:
-            σd = Standard deviation of NEGATIVE returns only
+          Rp = Mean periodic return
+          Rf = 0 (risk-free rate for crypto)
+          σd = Downside deviation = sqrt( Σ min(0, Ri)² / N )
+               where N = TOTAL number of periods (not just negative ones)
+               Using POPULATION denominator (1/N), not sample (1/(N-1))
+        
+        Source: Sortino, F.A. & Price, L.N. (1994), "Performance Measurement
+        in a Downside Risk Framework", Journal of Investing.
         """
         if equity_df.empty or len(equity_df) < 2:
             return 0.0
@@ -452,22 +457,39 @@ class BacktestEngine:
         equity = equity_df["equity"].values
         period_returns = np.diff(equity) / equity[:-1]
         
-        # Downside deviation: only consider negative returns
-        negative_returns = period_returns[period_returns < 0]
+        N = len(period_returns)
+        if N == 0:
+            return 0.0
         
-        if len(negative_returns) == 0 or np.std(negative_returns) == 0:
-            return 999.0 if len(negative_returns) == 0 else 0.0
+        # Mean return
+        mean_return = np.mean(period_returns)
         
+        # Downside deviation: SQUARE only negative returns, SUM all, DIVIDE by TOTAL N
+        negative_squared = np.where(period_returns < 0, period_returns**2, 0)
+        sum_negative_squared = np.sum(negative_squared)
+        
+        # Population denominator (1/N) — CFA standard
+        downside_variance = sum_negative_squared / N
+        downside_deviation = np.sqrt(downside_variance)
+        
+        # If no downside deviation at all (all returns positive)
+        if downside_deviation < 1e-10:
+            # Return a high but finite value, not infinity
+            return 999.0 if mean_return > 0 else 0.0
+        
+        # Annualization factor
         timeframe_periods = {
+            "1m": 365 * 24 * 60,
+            "5m": 365 * 24 * 12,
+            "15m": 365 * 24 * 4,
+            "1h": 365 * 24,
             "4h": 365 * 6,
             "1d": 365,
         }
         periods_per_year = timeframe_periods.get(PRIMARY_TIMEFRAME, 365 * 6)
         
-        mean_return = np.mean(period_returns)
-        downside_std = np.std(negative_returns, ddof=1)
-        
-        sortino = (mean_return / downside_std) * np.sqrt(periods_per_year)
+        # Annualized Sortino
+        sortino = (mean_return / downside_deviation) * np.sqrt(periods_per_year)
         
         return sortino
     
