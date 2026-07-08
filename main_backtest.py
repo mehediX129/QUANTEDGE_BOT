@@ -222,7 +222,7 @@ def test_all_params_for_symbol(
                 # We only consider results that actually generated trades.
                 # Results with 0 trades (all HOLD) are skipped.
                 # ----------------------------------------------------------
-                if result and result["trade_statistics"]["total_trades"] > 0:
+                if result and result["trade_statistics"]["total_trades"] >= 3:
                     with_trades += 1
                     sharpe = result["risk_metrics"]["sharpe_ratio"]
                     

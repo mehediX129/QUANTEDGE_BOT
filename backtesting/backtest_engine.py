@@ -106,19 +106,17 @@ class BacktestEngine:
     # ==================================================================
     # TRADE SIMULATION
     # ==================================================================
-    
+
     def _simulate_trades(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Simulate trades based on signals.
+        """     
+        Simulate trades with 2% FIXED FRACTIONAL position sizing.
         
-        Logic:
-        - Signal 1 (BUY): Enter long at next candle's open
-        - Signal -1 (SELL): Exit position at next candle's open
-        - One position at a time (no pyramiding)
+        FIXED: Now uses same 2% risk per trade as live RiskManager.
+        Previously allocated 100% capital to every trade,
+        which made backtest results incomparable to live trading.
         
-        Returns:
-            trades_df: Trade-by-trade results
-            equity_curve: Point-by-point equity values
+        Position Size Formula (same as RiskManager):
+            Position = (Capital × 2%) / (Entry - Stop Loss)
         """
         trades = []
         equity = []
@@ -127,86 +125,107 @@ class BacktestEngine:
         entry_price = 0.0
         entry_index = 0
         entry_time = None
+        position_size = 0.0
         
-        # Generate equity curve for every candle
+        # Need ATR for stop loss
+        if "ATR" not in df.columns:
+            from data.indicators import TechnicalIndicators
+            df = TechnicalIndicators.add_atr(df)
+        
         for i in range(1, len(df)):
             signal = df["signal"].iloc[i]
             current_price = df["close"].iloc[i]
             
             # --- ENTRY LOGIC ---
             if signal == 1 and not in_position:
-                # Apply slippage to entry (buy slightly higher)
                 entry_price = current_price * (1 + self.slippage)
                 entry_index = i
-                entry_time = df["timestamp"].iloc[i]
+                entry_time = df["timestamp"].iloc[i] if "timestamp" in df.columns else df.index[i]
+                
+                # Calculate stop loss using ATR
+                atr = df["ATR"].iloc[i]
+                if not pd.isna(atr) and atr > 0:
+                    stop_loss = entry_price - (atr * 2.0)
+                else:
+                    stop_loss = entry_price * 0.97
+                
+                # FIXED: 2% risk position sizing (same as live)
+                risk_amount = capital * 0.02  # 2% risk
+                price_risk = abs(entry_price - stop_loss)
+                if price_risk > 0:
+                    position_size = risk_amount / price_risk
+                else:
+                    position_size = 0
+                
+                # Cap to available capital
+                position_value = position_size * entry_price
+                if position_value > capital:
+                    position_size = capital / entry_price
+                
                 in_position = True
             
             # --- EXIT LOGIC ---
             elif signal == -1 and in_position:
-                # Apply slippage to exit (sell slightly lower)
                 exit_price = current_price * (1 - self.slippage)
                 exit_index = i
-                exit_time = df["timestamp"].iloc[i]
+                exit_time = df["timestamp"].iloc[i] if "timestamp" in df.columns else df.index[i]
                 
                 # Calculate PnL
-                price_return = (exit_price - entry_price) / entry_price
+                gross_pnl = (exit_price - entry_price) * position_size
+                commission_cost = position_size * entry_price * self.commission * 2
+                net_pnl = gross_pnl - commission_cost
+                net_pnl_pct = (net_pnl / (position_size * entry_price)) * 100
                 
-                # Apply commission on both entry and exit
-                gross_pnl_pct = price_return - (2 * self.commission)
-                gross_pnl_dollar = capital * gross_pnl_pct
-                
-                # Update capital (compounding)
                 capital_before = capital
-                capital = capital * (1 + gross_pnl_pct)
+                capital += net_pnl
                 
-                # Record trade
                 trades.append({
                     "entry_time": entry_time,
                     "exit_time": exit_time,
                     "entry_price": entry_price,
                     "exit_price": exit_price,
                     "holding_bars": exit_index - entry_index,
-                    "return_pct": gross_pnl_pct * 100,  # Store as percentage
-                    "pnl_dollar": capital - capital_before,
+                    "return_pct": net_pnl_pct,
+                    "pnl_dollar": net_pnl,
                     "capital_before": capital_before,
                     "capital_after": capital,
-                    "win": gross_pnl_dollar > 0,
+                    "win": net_pnl > 0,
                 })
                 
                 in_position = False
             
             # Track equity
             if in_position:
-                # Mark-to-market: current unrealized equity
-                unrealized_return = (current_price - entry_price) / entry_price
-                current_equity = capital * (1 + unrealized_return)
+                unrealized = (current_price - entry_price) * position_size
+                current_equity = capital + unrealized
             else:
                 current_equity = capital
             
             equity.append({
-                "timestamp": df["timestamp"].iloc[i],
+                "timestamp": df["timestamp"].iloc[i] if "timestamp" in df.columns else df.index[i],
                 "equity": current_equity,
                 "in_position": in_position,
             })
         
-        # Close any open position at the end
+        # Close open position at end
         if in_position:
             exit_price = df["close"].iloc[-1] * (1 - self.slippage)
-            price_return = (exit_price - entry_price) / entry_price
-            gross_pnl_pct = price_return - (2 * self.commission)
-            capital = capital * (1 + gross_pnl_pct)
+            gross_pnl = (exit_price - entry_price) * position_size
+            commission_cost = position_size * entry_price * self.commission * 2
+            net_pnl = gross_pnl - commission_cost
+            capital += net_pnl
             
             trades.append({
                 "entry_time": entry_time,
-                "exit_time": df["timestamp"].iloc[-1],
+                "exit_time": df["timestamp"].iloc[-1] if "timestamp" in df.columns else df.index[-1],
                 "entry_price": entry_price,
                 "exit_price": exit_price,
                 "holding_bars": len(df) - 1 - entry_index,
-                "return_pct": gross_pnl_pct * 100,
-                "pnl_dollar": capital - self.initial_capital,
-                "capital_before": self.initial_capital,
+                "return_pct": (net_pnl / (position_size * entry_price)) * 100,
+                "pnl_dollar": net_pnl,
+                "capital_before": capital - net_pnl,
                 "capital_after": capital,
-                "win": gross_pnl_pct > 0,
+                "win": net_pnl > 0,
             })
         
         trades_df = pd.DataFrame(trades)

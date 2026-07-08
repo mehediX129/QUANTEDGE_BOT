@@ -423,24 +423,35 @@ class TechnicalIndicators:
         """
         Detect swing highs and lows (support/resistance levels).
         
-        Swing High: A high that's higher than 'window' candles on each side
-        Swing Low: A low that's lower than 'window' candles on each side
+        FIXED: Removed center=True (look-ahead bias).
+        Now uses expanding/rolling max/min that only looks at PAST data,
+        not future candles.
         
-        These represent potential support/resistance zones.
+        Swing High: Highest high in the last 'window' candles
+        Swing Low: Lowest low in the last 'window' candles
         
         Added columns:
-        - Swing_High: Swing high price level
-        - Swing_Low: Swing low price level
-        - Near_Support: True if price is within 2% of recent swing low
-        - Near_Resistance: True if price is within 2% of recent swing high
+        - Swing_High: Recent swing high
+        - Swing_Low: Recent swing low
+        - Near_Support: True if price within 2% of swing low
+        - Near_Resistance: True if price within 2% of swing high
         """
-        # Rolling max/min with center=True means we look at surrounding candles
-        df["Swing_High"] = df["high"].rolling(window=window, center=True).max()
-        df["Swing_Low"] = df["low"].rolling(window=window, center=True).min()
+        # FIXED: center=False (default) — only looks at PAST candles
+        df["Swing_High"] = df["high"].rolling(window=window, center=False).max()
+        df["Swing_Low"] = df["low"].rolling(window=window, center=False).min()
+        
+        # Forward-fill the levels so they extend until broken
+        # This avoids NaN gaps
+        df["Swing_High"] = df["Swing_High"].ffill()
+        df["Swing_Low"] = df["Swing_Low"].ffill()
         
         # Is price near support/resistance?
         df["Near_Support"] = (df["close"] - df["Swing_Low"]) / df["close"] < 0.02
         df["Near_Resistance"] = (df["Swing_High"] - df["close"]) / df["close"] < 0.02
+        
+        # Fix NaN values
+        df["Near_Support"] = df["Near_Support"].fillna(False)
+        df["Near_Resistance"] = df["Near_Resistance"].fillna(False)
         
         return df
     

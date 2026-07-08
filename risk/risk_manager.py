@@ -140,54 +140,34 @@ class RiskManager:
         symbol: str,
         signal_type: str,
         entry_price: float,
-        stop_loss_price: float,
-        open_positions_count: int,
-        daily_pnl: float
+        stop_loss_price: float
     ) -> Tuple[bool, str]:
         """
         Pre-trade validation checklist.
         
-        Checks ALL risk rules before allowing a trade:
-        1. Daily loss limit not exceeded
-        2. Maximum positions not exceeded
-        3. Not already in this position
-        4. Stop loss distance is reasonable
-        
-        Args:
-            symbol: Trading pair (e.g., 'BTC/USDT')
-            signal_type: 'BUY' or 'SELL'
-            entry_price: Entry price
-            stop_loss_price: Stop loss price
-            open_positions_count: Current number of open positions
-            daily_pnl: Today's profit/loss so far
-        
-        Returns:
-            (approved: bool, reason: str)
-        
-        Example:
-            approved, reason = rm.validate_trade(
-                "BTC/USDT", "BUY", 62000, 60000, 2, -15.0
-            )
-            # If daily PnL = -$15 (from $1000 = -1.5%), approved=True
-            # If daily PnL = -$60 (from $1000 = -6%), approved=False
+        FIXED: Now uses self.open_positions and self.daily_pnl
+        instead of taking them as parameters.
+        This eliminates the double source-of-truth bug.
         """
-        # --- Check 1: Daily Loss Limit ---
+        # Reset daily stats if new day
         self.reset_daily_stats()
+        
+        # --- Check 1: Daily Loss Limit ---
         max_daily_loss_amount = self.portfolio_size * self.max_daily_loss
         
-        if daily_pnl <= -max_daily_loss_amount:
+        if self.daily_pnl <= -max_daily_loss_amount:
             reason = (
                 f"Daily loss limit reached! "
-                f"PnL: ${daily_pnl:.2f} (Limit: -${max_daily_loss_amount:.2f})"
+                f"PnL: ${self.daily_pnl:.2f} (Limit: -${max_daily_loss_amount:.2f})"
             )
             log.warning(f"Trade rejected: {reason}")
             return False, reason
         
         # --- Check 2: Max Open Positions ---
-        if signal_type == "BUY" and open_positions_count >= self.max_open_positions:
+        if signal_type == "BUY" and len(self.open_positions) >= self.max_open_positions:
             reason = (
                 f"Maximum positions ({self.max_open_positions}) already open. "
-                f"Current: {open_positions_count}"
+                f"Current: {len(self.open_positions)}"
             )
             log.warning(f"Trade rejected: {reason}")
             return False, reason
@@ -201,13 +181,11 @@ class RiskManager:
         # --- Check 4: Stop Loss Distance ---
         risk_percent = abs(entry_price - stop_loss_price) / entry_price
         
-        # Stop too far (>10% risk in one trade)
         if risk_percent > 0.10:
             reason = f"Stop loss too far: {risk_percent:.1%} from entry (max 10%)"
             log.warning(f"Trade rejected: {reason}")
             return False, reason
         
-        # Stop too close (<0.5% - would get stopped by normal noise)
         if risk_percent < 0.005:
             reason = f"Stop loss too close: {risk_percent:.1%} from entry (min 0.5%)"
             log.warning(f"Trade rejected: {reason}")
