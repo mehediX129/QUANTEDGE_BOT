@@ -50,7 +50,10 @@ from config.settings import (             # Central configuration
 from data.collector import DataCollector  # Exchange connection & data fetching
 from strategies import DEFAULT_STRATEGY, STRATEGIES  # Strategy registry
 from risk.risk_manager import RiskManager # Risk management & position sizing
-
+from execution.order_executor import OrderExecutor
+from core.position_tracker import PositionTracker
+from monitor.telegram_bot import TelegramNotifier
+from data.database import Database
 
 # ==================================================================
 # FUNCTION 1: display_startup_banner()
@@ -87,165 +90,153 @@ def display_startup_banner():
 # FUNCTION 2: scan_for_signals()
 # ==================================================================
 
-def scan_for_signals(collector, strategy, risk_manager):
+def scan_for_signals(collector, strategy, risk_manager, executor, tracker, telegram, db):
     """
-    Scan ALL configured symbols for trading signals.
-    
-    This is the CORE function that:
-    1. Fetches 200 candles of OHLCV data per symbol
-    2. Calculates all technical indicators
-    3. Runs the strategy's signal generation logic
-    4. For BUY signals: calculates stop loss, take profit, position size
-    5. Displays compact one-line status per symbol
-    
-    Parameters:
-        collector: DataCollector instance (fetches market data)
-        strategy: Strategy instance (generates buy/sell signals)
-        risk_manager: RiskManager instance (calculates position size)
-    
-    Returns:
-        List of signal dictionaries, each containing:
-        - symbol, signal (BUY/SELL), entry, stop_loss, take_profit, qty
+    Scan ALL symbols for signals, validate, and execute paper trades.
     """
+    signals_found = []
     
-    signals_found = []  # Will hold all signals found in this scan
-    
-    # Print scan header with current time
     log.info("=" * 50)
     log.info(f"SIGNAL SCAN — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info("=" * 50)
     
-    # ------------------------------------------------------------------
-    # Loop through each symbol (BTC, ETH, SOL, ADA)
-    # ------------------------------------------------------------------
+    # Reset daily tracking if new day
+    tracker.reset_daily_if_needed()
+    daily_pnl = tracker.get_daily_pnl()
+    open_count = tracker.get_open_positions_count()
+    
+    log.info(f"Open Positions: {open_count} | Daily PnL: ${daily_pnl:+.2f}")
+    
     for symbol in SYMBOLS:
-        
-        # --------------------------------------------------------------
-        # Step 1: Fetch OHLCV candlestick data
-        # --------------------------------------------------------------
-        # We fetch 200 candles of 4h timeframe.
-        # 200 × 4h = 800 hours = ~33 days of data.
-        # This is enough for all our indicators to calculate properly.
-        df = collector.fetch_ohlcv(
-            symbol,
-            timeframe=PRIMARY_TIMEFRAME,
-            limit=200
-        )
-        
-        # If data fetch failed or too few candles, skip this symbol
+        # Fetch data
+        df = collector.fetch_ohlcv(symbol, timeframe=PRIMARY_TIMEFRAME, limit=200)
         if df is None or len(df) < 50:
-            log.warning(f"⚠ {symbol}: Insufficient data (need 50+ candles)")
             continue
         
-        # --------------------------------------------------------------
-        # Step 2: Generate signals using our strategy
-        # --------------------------------------------------------------
-        # This calculates all indicators (EMA, RSI, MACD, ATR, ADX, etc.)
-        # and applies the buy/sell conditions.
-        # Adds a 'signal' column: 1=BUY, -1=SELL, 0=HOLD
+        # Generate signals
         df = strategy.generate_signals(df)
+        latest_signal = df["signal"].iloc[-1]
+        latest = df.iloc[-1]
+        close = latest["close"]
+        candle_time = df["timestamp"].iloc[-1]
         
-        # Get the LAST row (most recent candle)
-        latest_signal = df["signal"].iloc[-1]  # 1, -1, or 0
-        latest = df.iloc[-1]                    # All indicator values
-        
-        # --------------------------------------------------------------
-        # Step 3: Extract indicator values for display
-        # --------------------------------------------------------------
-        close = latest["close"]                  # Current price
-        rsi = latest.get("RSI", None)            # RSI value (0-100)
-        adx = latest.get("ADX", None)            # ADX value (trend strength)
-        vol = latest.get("Volume_Ratio", None)   # Volume vs 20-period average
-        
-        # Format for display — handle None/Nan values gracefully
+        rsi = latest.get("RSI", None)
+        adx = latest.get("ADX", None)
+        vol = latest.get("Volume_Ratio", None)
         rsi_str = f"RSI={rsi:.1f}" if rsi is not None and not (isinstance(rsi, float) and str(rsi) == 'nan') else "RSI=N/A"
         adx_str = f"ADX={adx:.1f}" if adx is not None and not (isinstance(adx, float) and str(adx) == 'nan') else "ADX=N/A"
         vol_str = f"Vol={vol:.1f}x" if vol is not None and not (isinstance(vol, float) and str(vol) == 'nan') else "Vol=N/A"
         
-        # --------------------------------------------------------------
-        # Step 4: BUY SIGNAL
-        # --------------------------------------------------------------
+        # --- BUY SIGNAL ---
         if latest_signal == 1:
-            # 🔵 Bullish — all buy conditions met
-            log.success(
-                f"🔵 BUY  {symbol:<12} ${close:>10,.2f} | "
-                f"{rsi_str} | {adx_str} | {vol_str}"
-            )
+            # Skip if duplicate
+            if tracker.is_duplicate_signal(symbol, "BUY", candle_time):
+                continue
             
-            # Calculate stop loss using ATR (from strategy)
+            # Skip if already in position
+            if tracker.is_in_position(symbol):
+                log.info(f"⚪ {symbol}: Already in position, skipping BUY")
+                continue
+            
             entry_price = close
-            stop_loss = strategy.get_stop_loss(df, len(df) - 1, entry_price)
-            
-            # Calculate take profit using Risk:Reward ratio
+            stop_loss = strategy.get_stop_loss(df, len(df)-1, entry_price)
             take_profit = strategy.get_take_profit(entry_price, stop_loss)
             
-            # Calculate position size using Risk Manager
-            # This applies the 2% risk rule
-            qty = risk_manager.calculate_position_size(
-                entry_price, stop_loss, PORTFOLIO_SIZE
+            # --- RISK VALIDATION ---
+            approved, reason = risk_manager.validate_trade(
+                symbol=symbol,
+                signal_type="BUY",
+                entry_price=entry_price,
+                stop_loss_price=stop_loss,
+                open_positions_count=open_count,
+                daily_pnl=daily_pnl,
             )
             
-            # Display trade details
-            log.info(
-                f"     Entry=${entry_price:,.2f} | "
-                f"SL=${stop_loss:,.2f} | "
-                f"TP=${take_profit:,.2f} | "
-                f"Size={qty:.6f} units"
-            )
+            if not approved:
+                log.warning(f"🔵 BUY {symbol} REJECTED: {reason}")
+                continue
             
-            # Save this signal
+            # --- POSITION SIZING ---
+            qty = risk_manager.calculate_position_size(entry_price, stop_loss, PORTFOLIO_SIZE)
+            
+            log.success(f"🔵 BUY  {symbol:<12} ${close:>10,.2f} | {rsi_str} | {adx_str} | {vol_str}")
+            log.info(f"     Entry=${entry_price:,.2f} | SL=${stop_loss:,.2f} | TP=${take_profit:,.2f} | Size={qty:.6f}")
+            
+            # --- EXECUTE PAPER ORDER ---
+            order = None
+            if TRADING_MODE == "paper":
+                order = executor.market_buy(symbol, qty)
+                if order:
+                    # Track position
+                    tracker.open_position(symbol, entry_price, qty, stop_loss, take_profit)
+                    risk_manager.register_position(symbol, entry_price, stop_loss)
+                    open_count += 1
+                    # Telegram
+                    telegram.trade_alert(symbol, "BUY", qty, entry_price)
+
+                    # Find and close trade in database
+                    open_trades = db.get_open_trades()
+                    for trade in open_trades:
+                        if trade["symbol"] == symbol:
+                            db.close_trade(trade["id"], close, pnl)
+                    
+                    db.save_signal(symbol, "SELL", close, rsi, adx, vol, 
+                                  "UPTREND" if latest.get("EMA_20", 0) > latest.get("EMA_50", 0) else "DOWN",
+                                  candle_time, True, "Exit signal")
+
             signals_found.append({
-                "symbol": symbol,
-                "signal": "BUY",
-                "entry": entry_price,
-                "stop_loss": stop_loss,
-                "take_profit": take_profit,
-                "qty": qty,
-                "timestamp": datetime.now(),
+                "symbol": symbol, "signal": "BUY",
+                "entry": entry_price, "stop_loss": stop_loss,
+                "take_profit": take_profit, "qty": qty,
+                "executed": order is not None,
             })
         
-        # --------------------------------------------------------------
-        # Step 5: SELL SIGNAL
-        # --------------------------------------------------------------
+        # --- SELL SIGNAL ---
         elif latest_signal == -1:
-            # 🔴 Bearish — exit condition triggered
-            log.warning(
-                f"🔴 SELL {symbol:<12} ${close:>10,.2f} | "
-                f"{rsi_str} | {adx_str} | {vol_str}"
-            )
+            if not tracker.is_in_position(symbol):
+                continue
+            
+            if tracker.is_duplicate_signal(symbol, "SELL", candle_time):
+                continue
+            
+            pos = tracker.get_position(symbol)
+            
+            log.warning(f"🔴 SELL {symbol:<12} ${close:>10,.2f} | {rsi_str} | {adx_str} | {vol_str}")
+            
+            # Execute paper sell
+            order = None
+            if TRADING_MODE == "paper":
+                order = executor.market_sell(symbol, pos["quantity"])
+                if order:
+                    pnl = tracker.close_position(symbol, close)
+                    risk_manager.remove_position(symbol)
+                    risk_manager.update_pnl(pnl)
+                    open_count -= 1
+                    telegram.trade_alert(symbol, "SELL", pos["quantity"], close)
+                    
+                    # Save to database
+                    trade_id = db.save_trade(symbol, "SELL", pos["quantity"], close)
+                    db.save_signal(symbol, "SELL", close, rsi, adx, vol, 
+                                  "UPTREND" if latest.get("EMA_20", 0) > latest.get("EMA_50", 0) else "DOWN",
+                                  candle_time, True, "Risk approved")
+            
             signals_found.append({
-                "symbol": symbol,
-                "signal": "SELL",
-                "entry": close,
-                "timestamp": datetime.now(),
+                "symbol": symbol, "signal": "SELL", "executed": order is not None,
             })
         
-        # --------------------------------------------------------------
-        # Step 6: HOLD (No Signal)
-        # --------------------------------------------------------------
+        # --- HOLD ---
         else:
-            # ⚪ No signal — determine trend direction for context
-            ema_20 = latest.get("EMA_20", None)
-            ema_50 = latest.get("EMA_50", None)
-            
-            if ema_20 is not None and ema_50 is not None:
-                trend = "↗" if ema_20 > ema_50 else "↘"
-            else:
-                trend = "?"
-            
-            log.info(
-                f"⚪ HOLD {symbol:<12} ${close:>10,.2f} | "
-                f"{rsi_str} | {adx_str} | {vol_str} | {trend}"
-            )
+            trend = "↗" if latest.get("EMA_20", 0) > latest.get("EMA_50", 0) else "↘"
+            pos_marker = " 🔒" if tracker.is_in_position(symbol) else ""
+            log.info(f"⚪ HOLD {symbol:<12} ${close:>10,.2f} | {rsi_str} | {adx_str} | {vol_str} | {trend}{pos_marker}")
     
-    # ------------------------------------------------------------------
-    # Print scan summary
-    # ------------------------------------------------------------------
+    # Summary
     buy_count = sum(1 for s in signals_found if s["signal"] == "BUY")
     sell_count = sum(1 for s in signals_found if s["signal"] == "SELL")
-    hold_count = len(SYMBOLS) - buy_count - sell_count
+    executed_buys = sum(1 for s in signals_found if s["signal"] == "BUY" and s.get("executed"))
     
-    log.info(f"SUMMARY: {buy_count} Buy | {sell_count} Sell | {hold_count} Hold")
+    log.info(f"SUMMARY: {buy_count} Buy ({executed_buys} executed) | {sell_count} Sell | "
+             f"Open: {tracker.get_open_positions_count()}")
     log.info("=" * 50)
     
     return signals_found
@@ -385,26 +376,38 @@ def main():
     # ------------------------------------------------------------------
     risk_manager = RiskManager()
     log.success("Risk Manager initialized")
-
-    # ------------------------------------------------------------------
-    # STEP 7.5: Test Order Executor (PAPER MODE ONLY)
-    # ------------------------------------------------------------------
-    if TRADING_MODE == "paper":
-        log.info("")
-        test_order_executor()
-        log.info("")
     
     # ------------------------------------------------------------------
-    # STEP 8: All systems go — run first scan
+    # STEP 8: Initialize Order Executor + Position Tracker + Telegram
+    # ------------------------------------------------------------------
+    executor = OrderExecutor()
+    log.success("Order Executor initialized")
+    
+    tracker = PositionTracker()
+    log.success(f"Position Tracker initialized ({tracker.get_open_positions_count()} open)")
+    
+    # DATABASE
+    db = Database()
+    log.success("Database initialized")
+
+    telegram = TelegramNotifier()
+    if telegram.enabled:
+        telegram.send(f"🤖 <b>QuantEdge Bot Started</b>\n"
+                      f"Mode: {TRADING_MODE}\n"
+                      f"Portfolio: ${PORTFOLIO_SIZE}\n"
+                      f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # ------------------------------------------------------------------
+    # STEP 9: All systems go — run first scan
     # ------------------------------------------------------------------
     log.info("")
     log.info("🚀 All systems initialized. Running first market scan...")
     log.info("")
     
-    scan_for_signals(collector, strategy, risk_manager)
+    scan_for_signals(collector, strategy, risk_manager, executor, tracker, telegram, db)
     
     # ------------------------------------------------------------------
-    # STEP 9: Continuous scanning loop
+    # STEP 10: Continuous scanning loop
     # ------------------------------------------------------------------
     SCAN_INTERVAL_MINUTES = 15  # Scan every 15 minutes
     
@@ -429,11 +432,19 @@ def main():
             # ----------------------------------------------------------
             # Time to scan!
             # ----------------------------------------------------------
-            scan_for_signals(collector, strategy, risk_manager)
+            scan_for_signals(collector, strategy, risk_manager, executor, tracker, telegram, db)
+            
+            # Save daily equity snapshot
+            db.save_equity_snapshot(
+                PORTFOLIO_SIZE + tracker.get_daily_pnl(),
+                tracker.get_daily_pnl(),
+                tracker.get_open_positions_count()
+            )
+            
             print()  # Blank line between scans for readability
     
     # ------------------------------------------------------------------
-    # STEP 10: Graceful shutdown
+    # STEP 11: Graceful shutdown
     # ------------------------------------------------------------------
     except KeyboardInterrupt:
         log.info("")
