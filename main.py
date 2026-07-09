@@ -148,8 +148,6 @@ def scan_for_signals(collector, strategy, risk_manager, executor, tracker, teleg
                 signal_type="BUY",
                 entry_price=entry_price,
                 stop_loss_price=stop_loss,
-                open_positions_count=open_count,
-                daily_pnl=daily_pnl,
             )
             
             if not approved:

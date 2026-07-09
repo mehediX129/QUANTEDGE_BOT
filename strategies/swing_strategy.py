@@ -171,22 +171,27 @@ class SwingStrategy(BaseStrategy):
             conditions["rsi_oversold"].iloc[i],          # Pullback
             conditions["volume_spike"].iloc[i],           # Volume confirmation
             conditions["strong_trend"].iloc[i],           # Trending
-            conditions["above_vwap"].iloc[i],             # Bullish intraday
         ]
         
-        # All core conditions must be True
-        if not all(core):
+        # RESEARCH-BASED CHANGE: 4-of-6 scoring instead of 6 AND-gate
+        # Core conditions: need at least 3 out of 4 (was: all 4)
+        core_count = sum(core)  # Count how many are True
+        if core_count < 3:
             return False
         
-        # MACD confirmation (at least one must be true)
-        macd_ok = (
-            conditions["macd_bullish"].iloc[i] or         # Fresh crossover
-            conditions["macd_above_signal"].iloc[i] or    # Or already bullish
-            conditions["histogram_rising"].iloc[i]        # Or improving
+        # MACD confirmation: flexible (1 of 3 enough, not mandatory)
+        # Only reject if MACD is actively bearish (all 3 signals negative)
+        macd_score = (
+            (1 if conditions["macd_bullish"].iloc[i] else 0) +
+            (1 if conditions["macd_above_signal"].iloc[i] else 0) +
+            (1 if conditions["histogram_rising"].iloc[i] else 0)
         )
         
-        if not macd_ok:
-            return False
+        # MACD warning: if all 3 MACD signals are bearish, reject
+        if macd_score == 0:
+            # But still allow if core_count is 4 (very strong signal)
+            if core_count < 4:
+                return False
         
         # Run additional validation
         if not self.validate_signal(df, i):

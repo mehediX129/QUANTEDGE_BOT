@@ -93,7 +93,7 @@ STRATEGY_CONFIG = {
     "rsi_sell_zone": 70,
     "volume_ma_period": 20,
     "volume_spike_multiplier": 1.0,  # Optimized from 1.5
-    "adx_threshold": 15,             # Optimized from 20
+    "adx_threshold": 20,             # Changed from 15 to 20 (research-based)
     "atr_multiplier": 2.0,           # Now used by strategy
     "risk_reward_ratio": 2.5,        # Now used by strategy
 }
