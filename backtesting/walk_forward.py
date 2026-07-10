@@ -145,11 +145,21 @@ def _find_best_params(df, symbol, min_trades=5):
     for rsi_buy in rsi_levels:
         for vol_mult in vol_multipliers:
             for adx_min in adx_levels:
+                
+                # Check for asset-specific overrides from config
+                from config.settings import ASSET_STRATEGY_CONFIG
+                asset_cfg = ASSET_STRATEGY_CONFIG.get(symbol, {})
+                
                 params = {
-                    "ema_fast": 20, "ema_slow": 50, "rsi_period": 14,
-                    "rsi_buy_zone": rsi_buy, "rsi_sell_zone": 70,
-                    "volume_multiplier": vol_mult, "adx_min": adx_min,
-                    "risk_reward_ratio": 2.5, "atr_multiplier": 2.0,
+                    "ema_fast": 20,
+                    "ema_slow": 50,
+                    "rsi_period": 14,
+                    "rsi_buy_zone": asset_cfg.get("rsi_buy_zone", rsi_buy),
+                    "rsi_sell_zone": 70,
+                    "volume_multiplier": asset_cfg.get("volume_multiplier", vol_mult),
+                    "adx_min": asset_cfg.get("adx_threshold", adx_min),
+                    "risk_reward_ratio": 2.5,
+                    "atr_multiplier": 2.0,
                 }
                 
                 strategy = SwingStrategy()

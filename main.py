@@ -109,7 +109,11 @@ def scan_for_signals(collector, strategy, risk_manager, executor, tracker, teleg
     
     for symbol in SYMBOLS:
         # Fetch data
-        df = collector.fetch_ohlcv(symbol, timeframe=PRIMARY_TIMEFRAME, limit=200)
+        # Per-asset timeframe (research-backed)
+        from config.settings import ASSET_TIMEFRAMES
+        asset_timeframe = ASSET_TIMEFRAMES.get(symbol, PRIMARY_TIMEFRAME)
+        df = collector.fetch_ohlcv(symbol, timeframe=asset_timeframe, limit=200)
+
         if df is None or len(df) < 50:
             continue
         

@@ -49,8 +49,26 @@ SYMBOLS = [
     "ADA/USDT",
 ]
 
+# ------------------------------------------------------------------
+# STEP 3B: Per-Asset Timeframes (Research-backed)
+# ------------------------------------------------------------------
+# Research (Zhivkov & Kandilarov 2026) shows strategy-asset-timeframe
+# interaction effects. Different assets perform optimally on different
+# timeframes based on their volatility and liquidity characteristics.
+# 
+# BTC: 4H - Stable asset, needs longer timeframe for meaningful swings
+# ETH: 1H - Moderate volatility, 1H captures pullbacks effectively
+# SOL: 4H - High volatility on 1H causes whiplash, 4H smooths noise
+# ADA: 1H - Mean-reverting nature works well on shorter timeframe
+ASSET_TIMEFRAMES = {
+    "BTC/USDT": "4h",
+    "ETH/USDT": "1h",
+    "SOL/USDT": "4h",
+    "ADA/USDT": "1h",
+}
+
 # Timeframes for swing trading
-PRIMARY_TIMEFRAME = "4h"       # Main chart for signals
+PRIMARY_TIMEFRAME = "1h"       # Research-backed (Zhivkov & Kandilarov 2026) Main chart for signals
 CONFIRMATION_TIMEFRAME = "1d"  # Higher timeframe for trend confirmation
 
 # Base currency (what we use to buy crypto)
@@ -98,6 +116,35 @@ STRATEGY_CONFIG = {
     "risk_reward_ratio": 2.5,        # Now used by strategy
 }
 
+
+# ------------------------------------------------------------------
+# STEP 5B: Per-Asset Strategy Parameters (Research-backed)
+# ------------------------------------------------------------------
+# Research (Zhivkov & Kandilarov 2026) shows strategy-asset interaction
+# effects of 2.4x-17.8x in viable parameter space.
+# Different assets need different parameters.
+ASSET_STRATEGY_CONFIG = {
+    "BTC/USDT": {
+        "rsi_buy_zone": 50,       # BTC pulls back less — higher RSI acceptance
+        "volume_multiplier": 1.5, # BTC has deep liquidity — need strong volume
+        "adx_threshold": 30,      # BTC trends strongly — higher ADX for conviction
+    },
+    "ETH/USDT": {
+        "rsi_buy_zone": 42,
+        "volume_multiplier": 1.2,
+        "adx_threshold": 20,
+    },
+    "SOL/USDT": {
+        "rsi_buy_zone": 45,
+        "volume_multiplier": 1.0,
+        "adx_threshold": 18,
+    },
+    "ADA/USDT": {
+        "rsi_buy_zone": 35,
+        "volume_multiplier": 1.0,
+        "adx_threshold": 18,
+    },
+}
 
 # ------------------------------------------------------------------
 # STEP 6: Telegram Notification Configuration

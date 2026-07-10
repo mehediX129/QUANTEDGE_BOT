@@ -158,16 +158,20 @@ def test_all_params_for_symbol(
                 # from config/settings.py. This is how we test "what if"
                 # scenarios without changing the actual config.
                 # ----------------------------------------------------------
+                                # Check for asset-specific overrides from config
+                from config.settings import ASSET_STRATEGY_CONFIG
+                asset_cfg = ASSET_STRATEGY_CONFIG.get(symbol, {})
+                
                 params = {
-                    "ema_fast": 20,              # Fast EMA period (unchanged)
-                    "ema_slow": 50,              # Slow EMA period (unchanged)
-                    "rsi_period": 14,            # RSI calculation period (unchanged)
-                    "rsi_buy_zone": rsi_buy,     # ← BEING TESTED
-                    "rsi_sell_zone": 70,         # Sell when RSI > 70 (unchanged)
-                    "volume_multiplier": vol_mult,  # ← BEING TESTED
-                    "adx_min": adx_min,          # ← BEING TESTED
-                    "risk_reward_ratio": 2.5,    # Target RR ratio (unchanged)
-                    "atr_multiplier": 2.0,       # Stop loss distance (unchanged)
+                    "ema_fast": 20,
+                    "ema_slow": 50,
+                    "rsi_period": 14,
+                    "rsi_buy_zone": asset_cfg.get("rsi_buy_zone", rsi_buy),
+                    "rsi_sell_zone": 70,
+                    "volume_multiplier": asset_cfg.get("volume_multiplier", vol_mult),
+                    "adx_min": asset_cfg.get("adx_threshold", adx_min),
+                    "risk_reward_ratio": 2.5,
+                    "atr_multiplier": 2.0,
                 }
                 
                 # ----------------------------------------------------------
@@ -349,9 +353,12 @@ def main():
         # For production backtesting, increase limit to 1000+ for better
         # statistical significance.
         # --------------------------------------------------------------
+        # Per-asset timeframe (research-backed)
+        from config.settings import ASSET_TIMEFRAMES
+        asset_timeframe = ASSET_TIMEFRAMES.get(symbol, PRIMARY_TIMEFRAME)
         df = collector.fetch_ohlcv(
             symbol,
-            timeframe=PRIMARY_TIMEFRAME,
+            timeframe=asset_timeframe,
             limit=200
         )
         

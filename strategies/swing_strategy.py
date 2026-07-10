@@ -121,14 +121,9 @@ class SwingStrategy(BaseStrategy):
             "price_below_ema20": df["close"] < df["EMA_20"],
             
             # RSI conditions
-            "rsi_oversold": df["RSI"] < self.params["rsi_buy_zone"],
             "rsi_overbought": df["RSI"] > self.params["rsi_sell_zone"],
             
-            # Volume conditions
-            "volume_spike": df["Volume_Ratio"] > self.params["volume_multiplier"],
-            
             # Trend strength
-            "strong_trend": df["ADX"] > self.params["adx_min"],
             "adx_rising": df["ADX_Rising"],
             
             # VWAP
@@ -148,29 +143,41 @@ class SwingStrategy(BaseStrategy):
     # ------------------------------------------------------------------
     # BUY Signal Logic
     # ------------------------------------------------------------------
-    
+
     def _check_buy_conditions(
         self, conditions: dict, df: pd.DataFrame, i: int
     ) -> bool:
         """
         Check if ALL buy conditions are met at candle i.
-        
-        Buy conditions (ALL must be true):
-        1. EMA bullish (20 > 50) - uptrend
-        2. RSI oversold (< 35) - pullback in uptrend
-        3. Volume spike (>1.5x) - institutional interest
-        4. ADX > 20 - trending market
-        5. Close > VWAP - intraday bullish
-        6. MACD bullish or improving - momentum confirmation
-        + Additional validation (no bad candles)
         """
         
-        # Core conditions - ALL must be True
+        # --------------------------------------------------------------
+        # PER-ASSET PARAMETER OVERRIDE (Research-backed)
+        # --------------------------------------------------------------
+        # Each asset has different characteristics (volatility, liquidity)
+        # Research shows strategy-asset interaction effects of 2.4x-17.8x
+        # in viable parameter space. We use asset-specific thresholds
+        # from ASSET_STRATEGY_CONFIG in settings.py.
+        # --------------------------------------------------------------
+        symbol = df["symbol"].iloc[i] if "symbol" in df.columns else None
+        asset_params = None
+        if symbol:
+            from config.settings import ASSET_STRATEGY_CONFIG
+            asset_params = ASSET_STRATEGY_CONFIG.get(symbol, {})
+        
+        # Use asset-specific thresholds if available, else fall back to global defaults
+        rsi_buy = asset_params.get("rsi_buy_zone", self.params.get("rsi_buy_zone", 45))
+        vol_mult = asset_params.get("volume_multiplier", self.params.get("volume_multiplier", 1.0))
+        adx_min = asset_params.get("adx_threshold", self.params.get("adx_min", 20))
+        
+        # --------------------------------------------------------------
+        # Core conditions with ASSET-SPECIFIC thresholds
+        # --------------------------------------------------------------
         core = [
-            conditions["ema_bullish"].iloc[i],          # Uptrend
-            conditions["rsi_oversold"].iloc[i],          # Pullback
-            conditions["volume_spike"].iloc[i],           # Volume confirmation
-            conditions["strong_trend"].iloc[i],           # Trending
+            conditions["ema_bullish"].iloc[i],          # Uptrend (same for all)
+            (df["RSI"].iloc[i] < rsi_buy),              # Asset-specific RSI
+            (df["Volume_Ratio"].iloc[i] > vol_mult),    # Asset-specific volume
+            (df["ADX"].iloc[i] > adx_min),              # Asset-specific ADX
         ]
         
         # RESEARCH-BASED CHANGE: 4-of-6 scoring instead of 6 AND-gate
@@ -192,6 +199,18 @@ class SwingStrategy(BaseStrategy):
             # But still allow if core_count is 4 (very strong signal)
             if core_count < 4:
                 return False
+        
+        # --------------------------------------------------------------
+        # REGIME CHECK (Research-backed)
+        # --------------------------------------------------------------
+        # Research (Zhivkov & Kandilarov 2026) shows trend-following
+        # strategies fail in ranging and downtrend regimes.
+        # Only allow BUY in TRENDING_UP or TRANSITIONAL regimes.
+        # --------------------------------------------------------------
+        if "regime" in df.columns:
+            current_regime = df["regime"].iloc[i]
+            if current_regime in ["RANGING", "TRENDING_DOWN"]:
+                return False  # Skip buy signal in unfavorable regime
         
         # Run additional validation
         if not self.validate_signal(df, i):

@@ -47,7 +47,10 @@ class TradingEngine:
         log.info(f"Open Positions: {open_count} | Daily PnL: ${daily_pnl:+.2f}")
         
         for symbol in SYMBOLS:
-            df = self.collector.fetch_ohlcv(symbol, timeframe=PRIMARY_TIMEFRAME, limit=200)
+            # Per-asset timeframe (research-backed)
+            from config.settings import ASSET_TIMEFRAMES
+            asset_timeframe = ASSET_TIMEFRAMES.get(symbol, PRIMARY_TIMEFRAME)
+            df = self.collector.fetch_ohlcv(symbol, timeframe=asset_timeframe, limit=200)
             if df is None or len(df) < 50:
                 continue
             

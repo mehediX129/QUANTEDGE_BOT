@@ -85,6 +85,9 @@ class TechnicalIndicators:
         
         # --- Support & Resistance ---
         df = TechnicalIndicators.add_swing_levels(df)
+
+                # --- Regime Detection ---
+        df = TechnicalIndicators.add_regime_detection(df)
         
         return df
     
@@ -274,6 +277,63 @@ class TechnicalIndicators:
         
         return df
     
+
+    # ------------------------------------------------------------------
+    # REGIME DETECTION (Research-backed: Zhivkov & Kandilarov 2026)
+    # ------------------------------------------------------------------
+    
+    @staticmethod
+    def add_regime_detection(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Classify market regime for each candle.
+        
+        REGIME DEFINITIONS (research-backed):
+        - TRENDING_UP:   ADX > 25, EMA 20 > EMA 50, DMP > DMN
+        - TRENDING_DOWN: ADX > 25, EMA 20 < EMA 50, DMN > DMP
+        - RANGING:       ADX < 20
+        - TRANSITIONAL:  ADX 20-25 (uncertain, avoid trading)
+        - HIGH_VOL:      BB_Width > 80th percentile of 90-day BB_Width
+        
+        Added columns:
+        - regime: Market regime category
+        - regime_score: Numerical score for strategy switching
+        - is_trending: True if trending (up or down)
+        - volatility_regime: 'high', 'normal', 'low'
+        """
+        
+        # Ensure required indicators exist
+        if "ADX" not in df.columns:
+            df = TechnicalIndicators.add_adx(df)
+        if "BB_Width" not in df.columns:
+            df = TechnicalIndicators.add_bollinger_bands(df)
+        
+        # Initialize regime column
+        df["regime"] = "UNKNOWN"
+        df["is_trending"] = False
+        
+        # ADX-based classification
+        df.loc[(df["ADX"] > 25) & (df["EMA_20"] > df["EMA_50"]) & (df["DMP"] > df["DMN"]), "regime"] = "TRENDING_UP"
+        df.loc[(df["ADX"] > 25) & (df["EMA_20"] < df["EMA_50"]) & (df["DMN"] > df["DMP"]), "regime"] = "TRENDING_DOWN"
+        df.loc[df["ADX"] < 20, "regime"] = "RANGING"
+        df.loc[(df["ADX"] >= 20) & (df["ADX"] <= 25), "regime"] = "TRANSITIONAL"
+        
+        # Is trending flag
+        df["is_trending"] = df["regime"].str.startswith("TRENDING")
+        
+        # Volatility regime using Bollinger Band Width percentile
+        if len(df) >= 90:
+            bb_width_80th = df["BB_Width"].rolling(90).quantile(0.8)
+            bb_width_20th = df["BB_Width"].rolling(90).quantile(0.2)
+            
+            df["volatility_regime"] = "NORMAL"
+            df.loc[df["BB_Width"] > bb_width_80th, "volatility_regime"] = "HIGH"
+            df.loc[df["BB_Width"] < bb_width_20th, "volatility_regime"] = "LOW"
+        else:
+            df["volatility_regime"] = "NORMAL"
+        
+        return df
+
+
     # ------------------------------------------------------------------
     # INDICATOR 6: Bollinger Bands
     # ------------------------------------------------------------------
