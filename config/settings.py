@@ -53,9 +53,9 @@ SYMBOLS = [
 # STEP 3B: Per-Asset Timeframes (Research-backed)
 # ------------------------------------------------------------------
 # Research (Zhivkov & Kandilarov 2026) shows strategy-asset-timeframe
-# interaction effects. Different assets perform optimally on different
-# timeframes based on their volatility and liquidity characteristics.
-# 
+# Per-asset timeframe assignment — requires walk-forward validation.
+# These are initial estimates, not research-backed values.
+
 # BTC: 4H - Stable asset, needs longer timeframe for meaningful swings
 # ETH: 1H - Moderate volatility, 1H captures pullbacks effectively
 # SOL: 4H - High volatility on 1H causes whiplash, 4H smooths noise
@@ -144,7 +144,30 @@ ASSET_STRATEGY_CONFIG = {
         "volume_multiplier": 1.0,
         "adx_threshold": 18,
     },
+        "BTC/USDT": {
+        "donchian_period": 20,
+        "atr_stop_multiplier": 3.0,
+        "volume_multiplier": 1.2,
+        "adx_threshold": 25,
+    },
 }
+
+# ------------------------------------------------------------------
+# STEP 5b: Per-Symbol Strategy Assignment
+# ------------------------------------------------------------------
+# RESEARCH BASIS: Brauneis & Mestel (2018) + Zarattini, Pagani & Barbon
+# (2025, SSRN 5209907) — BTC is more liquid/efficient than ETH/SOL/ADA,
+# so pullback-style entries fit BTC poorly.
+SYMBOL_STRATEGY_MAP = {
+    "BTC/USDT": "donchian_breakout",
+    "ETH/USDT": "swing_combo",
+    "SOL/USDT": "swing_combo",
+    "ADA/USDT": "swing_combo",
+}
+
+# Donchian ensemble lookback periods for BTC (4H candles).
+# Starting point — MUST be walk-forward validated.
+DONCHIAN_LOOKBACK_PERIODS = [10, 20, 55]
 
 # ------------------------------------------------------------------
 # STEP 6: Telegram Notification Configuration

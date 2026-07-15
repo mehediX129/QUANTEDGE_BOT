@@ -41,11 +41,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # ------------------------------------------------------------------
 # Our own modules — each serves a specific purpose:
 from utils.logger import log              # Professional logging (loguru)
-from config.settings import (             # Central configuration
-    TRADING_MODE,                         # "paper" or "live"
-    SYMBOLS,                              # List of trading pairs
-    PORTFOLIO_SIZE,                       # Total capital in USDT
-    PRIMARY_TIMEFRAME,                    # Main chart timeframe (4h)
+from config.settings import (
+    TRADING_MODE,
+    SYMBOLS,
+    PORTFOLIO_SIZE,
+    PRIMARY_TIMEFRAME,
+    SYMBOL_STRATEGY_MAP,
 )
 from data.collector import DataCollector  # Exchange connection & data fetching
 from strategies import DEFAULT_STRATEGY, STRATEGIES  # Strategy registry
@@ -90,7 +91,7 @@ def display_startup_banner():
 # FUNCTION 2: scan_for_signals()
 # ==================================================================
 
-def scan_for_signals(collector, strategy, risk_manager, executor, tracker, telegram, db):
+def scan_for_signals(collector, strategies, risk_manager, executor, tracker, telegram, db):
     """
     Scan ALL symbols for signals, validate, and execute paper trades.
     """
@@ -118,7 +119,10 @@ def scan_for_signals(collector, strategy, risk_manager, executor, tracker, teleg
             continue
         
         # Generate signals
-        df = strategy.generate_signals(df)
+        # Get the right strategy for this symbol
+        symbol_strategy = strategies.get(symbol, list(strategies.values())[0])
+        df = symbol_strategy.generate_signals(df)
+
         latest_signal = df["signal"].iloc[-1]
         latest = df.iloc[-1]
         close = latest["close"]
@@ -143,8 +147,8 @@ def scan_for_signals(collector, strategy, risk_manager, executor, tracker, teleg
                 continue
             
             entry_price = close
-            stop_loss = strategy.get_stop_loss(df, len(df)-1, entry_price)
-            take_profit = strategy.get_take_profit(entry_price, stop_loss)
+            stop_loss = symbol_strategy.get_stop_loss(df, len(df)-1, entry_price)
+            take_profit = symbol_strategy.get_take_profit(entry_price, stop_loss)
             
             # --- RISK VALIDATION ---
             approved, reason = risk_manager.validate_trade(
@@ -175,16 +179,6 @@ def scan_for_signals(collector, strategy, risk_manager, executor, tracker, teleg
                     open_count += 1
                     # Telegram
                     telegram.trade_alert(symbol, "BUY", qty, entry_price)
-
-                    # Find and close trade in database
-                    open_trades = db.get_open_trades()
-                    for trade in open_trades:
-                        if trade["symbol"] == symbol:
-                            db.close_trade(trade["id"], close, pnl)
-                    
-                    db.save_signal(symbol, "SELL", close, rsi, adx, vol, 
-                                  "UPTREND" if latest.get("EMA_20", 0) > latest.get("EMA_50", 0) else "DOWN",
-                                  candle_time, True, "Exit signal")
 
             signals_found.append({
                 "symbol": symbol, "signal": "BUY",
@@ -370,8 +364,17 @@ def main():
         log.error(f"Available strategies: {list(STRATEGIES.keys())}")
         sys.exit(1)
     
-    strategy = StrategyClass()
-    log.success(f"Strategy '{strategy.name}' loaded")
+        # Per-asset strategy loading (research-backed)
+    asset_strategies = {}
+    for symbol in SYMBOLS:
+        strategy_name = SYMBOL_STRATEGY_MAP.get(symbol, DEFAULT_STRATEGY)
+        StrategyClass = STRATEGIES.get(strategy_name)
+        if StrategyClass:
+            asset_strategies[symbol] = StrategyClass()
+            log.success(f"  {symbol}: {strategy_name} loaded")
+        else:
+            log.error(f"Strategy '{strategy_name}' not found for {symbol}")
+            sys.exit(1)
     
     # ------------------------------------------------------------------
     # STEP 7: Initialize Risk Manager
@@ -406,12 +409,12 @@ def main():
     log.info("🚀 All systems initialized. Running first market scan...")
     log.info("")
     
-    scan_for_signals(collector, strategy, risk_manager, executor, tracker, telegram, db)
+    scan_for_signals(collector, asset_strategies, risk_manager, executor, tracker, telegram, db)
     
     # ------------------------------------------------------------------
     # STEP 10: Continuous scanning loop
     # ------------------------------------------------------------------
-    SCAN_INTERVAL_MINUTES = 15  # Scan every 15 minutes
+    SCAN_INTERVAL_MINUTES = 5  # Scan every 5 minutes
     
     log.info("")
     log.info(f"🔄 Continuous mode active — scanning every {SCAN_INTERVAL_MINUTES} minutes")
@@ -434,7 +437,7 @@ def main():
             # ----------------------------------------------------------
             # Time to scan!
             # ----------------------------------------------------------
-            scan_for_signals(collector, strategy, risk_manager, executor, tracker, telegram, db)
+            scan_for_signals(collector, asset_strategies, risk_manager, executor, tracker, telegram, db)
             
             # Save daily equity snapshot
             db.save_equity_snapshot(

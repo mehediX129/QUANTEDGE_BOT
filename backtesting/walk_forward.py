@@ -213,3 +213,42 @@ def run_walk_forward_all(symbols: list, limit: int = 200):
 if __name__ == "__main__":
     from config.settings import SYMBOLS
     results = run_walk_forward_all(SYMBOLS)
+
+
+from itertools import combinations
+from strategies.donchian_breakout import DonchianBreakoutStrategy
+
+
+def _find_best_donchian_params(df, symbol, min_trades=5):
+    """Sweep lookback-period combinations for the Donchian ensemble."""
+    candidate_periods = [5, 10, 15, 20, 30, 55, 80]
+
+    candidate_ensembles = (
+        [[p] for p in candidate_periods]
+        + list(combinations(candidate_periods, 2))
+        + list(combinations(candidate_periods, 3))
+    )
+
+    best_sharpe = -999
+    best_params = None
+    best_result = None
+
+    for ensemble in candidate_ensembles:
+        strategy = DonchianBreakoutStrategy(lookback_periods=list(ensemble))
+        df_signals = strategy.generate_signals(df.copy())
+
+        signal_counts = df_signals["signal"].value_counts().to_dict()
+        if signal_counts.get(1, 0) < 1:
+            continue
+
+        engine = BacktestEngine(PORTFOLIO_SIZE, 0.001, 0.0005)
+        result = engine.run(df_signals, symbol)
+
+        if result and result["trade_statistics"]["total_trades"] >= min_trades:
+            sharpe = result["risk_metrics"]["sharpe_ratio"]
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                best_result = result
+                best_params = {"lookback_periods": list(ensemble)}
+
+    return best_params, best_result

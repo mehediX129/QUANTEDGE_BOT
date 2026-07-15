@@ -150,6 +150,14 @@ def test_all_params_for_symbol(
         for vol_mult in vol_multipliers:
             for adx_min in adx_levels:
                 tested += 1
+
+                # Check which strategy this asset uses
+                from strategies import ASSET_STRATEGY_MAP
+                asset_strategy = ASSET_STRATEGY_MAP.get(symbol, "swing_combo")
+                
+                # BTC: Skip parameter sweep, use fixed Donchian params (1 test only)
+                if asset_strategy == "btc_breakout" and tested > 1:
+                    continue
                 
                 # ----------------------------------------------------------
                 # Build parameter dictionary for this combination
@@ -158,21 +166,34 @@ def test_all_params_for_symbol(
                 # from config/settings.py. This is how we test "what if"
                 # scenarios without changing the actual config.
                 # ----------------------------------------------------------
-                                # Check for asset-specific overrides from config
+                
+                # Check for asset-specific overrides from config
                 from config.settings import ASSET_STRATEGY_CONFIG
                 asset_cfg = ASSET_STRATEGY_CONFIG.get(symbol, {})
                 
-                params = {
-                    "ema_fast": 20,
-                    "ema_slow": 50,
-                    "rsi_period": 14,
-                    "rsi_buy_zone": asset_cfg.get("rsi_buy_zone", rsi_buy),
-                    "rsi_sell_zone": 70,
-                    "volume_multiplier": asset_cfg.get("volume_multiplier", vol_mult),
-                    "adx_min": asset_cfg.get("adx_threshold", adx_min),
-                    "risk_reward_ratio": 2.5,
-                    "atr_multiplier": 2.0,
-                }
+                # BTC: Use Donchian breakout parameters
+                if asset_strategy == "btc_breakout":
+                    params = {
+                        "donchian_period": asset_cfg.get("donchian_period", 20),
+                        "atr_period": 14,
+                        "atr_stop_multiplier": asset_cfg.get("atr_stop_multiplier", 3.0),
+                        "adx_threshold": asset_cfg.get("adx_threshold", 20),
+                        "volume_multiplier": asset_cfg.get("volume_multiplier", 1.0),
+                        "risk_reward_ratio": 2.0,
+                    }
+                else:
+                    # ETH/SOL/ADA: Use Swing strategy parameters
+                    params = {
+                        "ema_fast": 20,
+                        "ema_slow": 50,
+                        "rsi_period": 14,
+                        "rsi_buy_zone": asset_cfg.get("rsi_buy_zone", rsi_buy),
+                        "rsi_sell_zone": 70,
+                        "volume_multiplier": asset_cfg.get("volume_multiplier", vol_mult),
+                        "adx_min": asset_cfg.get("adx_threshold", adx_min),
+                        "risk_reward_ratio": 2.5,
+                        "atr_multiplier": 2.0,
+                    }
                 
                 # ----------------------------------------------------------
                 # Create strategy with test parameters
@@ -180,8 +201,13 @@ def test_all_params_for_symbol(
                 # We create a NEW strategy instance for each combination
                 # to avoid state leakage between tests.
                 # ----------------------------------------------------------
-                strategy = SwingStrategy()
-                strategy.params = params  # Override default params
+                # Per-asset strategy selection
+                from strategies import ASSET_STRATEGY_MAP, STRATEGIES
+                strategy_name = ASSET_STRATEGY_MAP.get(symbol, "swing_combo")
+                 # Use asset-specific strategy class
+                StrategyClass = STRATEGIES.get(asset_strategy, SwingStrategy)
+                strategy = StrategyClass()
+                strategy.params = params
                 
                 # ----------------------------------------------------------
                 # Generate signals on a COPY of the data
