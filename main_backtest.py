@@ -58,7 +58,8 @@ from utils.logger import log                    # Professional logging via logur
 from config.settings import (                    # Centralized configuration
     SYMBOLS,                                     # List of trading pairs to test
     PRIMARY_TIMEFRAME,                           # Main timeframe (default: "4h")
-    PORTFOLIO_SIZE,                              # Initial capital in USDT
+    PORTFOLIO_SIZE,                             # Initial capital in USDT
+    BACKTEST_CANDLE_LIMIT                       # Number of candles to fetch for backtesting
 )
 from data.collector import DataCollector         # Fetches OHLCV from exchange
 from strategies.swing_strategy import SwingStrategy  # Signal generation logic
@@ -152,8 +153,8 @@ def test_all_params_for_symbol(
                 tested += 1
 
                 # Check which strategy this asset uses
-                from strategies import ASSET_STRATEGY_MAP
-                asset_strategy = ASSET_STRATEGY_MAP.get(symbol, "swing_combo")
+                from strategies import SYMBOL_STRATEGY_MAP
+                asset_strategy = SYMBOL_STRATEGY_MAP.get(symbol, "swing_combo")
                 
                 # BTC: Skip parameter sweep, use fixed Donchian params (1 test only)
                 if asset_strategy == "btc_breakout" and tested > 1:
@@ -171,15 +172,14 @@ def test_all_params_for_symbol(
                 from config.settings import ASSET_STRATEGY_CONFIG
                 asset_cfg = ASSET_STRATEGY_CONFIG.get(symbol, {})
                 
-                # BTC: Use Donchian breakout parameters
-                if asset_strategy == "btc_breakout":
+                                # BTC: Use Donchian breakout parameters
+                if asset_strategy == "donchian_breakout":
+                    from config.settings import DONCHIAN_LOOKBACK_PERIODS
                     params = {
-                        "donchian_period": asset_cfg.get("donchian_period", 20),
+                        "lookback_periods": DONCHIAN_LOOKBACK_PERIODS,
+                        "vote_threshold": 0.5,
                         "atr_period": 14,
-                        "atr_stop_multiplier": asset_cfg.get("atr_stop_multiplier", 3.0),
-                        "adx_threshold": asset_cfg.get("adx_threshold", 20),
-                        "volume_multiplier": asset_cfg.get("volume_multiplier", 1.0),
-                        "risk_reward_ratio": 2.0,
+                        "atr_risk_multiplier": 2.0,
                     }
                 else:
                     # ETH/SOL/ADA: Use Swing strategy parameters
@@ -202,8 +202,8 @@ def test_all_params_for_symbol(
                 # to avoid state leakage between tests.
                 # ----------------------------------------------------------
                 # Per-asset strategy selection
-                from strategies import ASSET_STRATEGY_MAP, STRATEGIES
-                strategy_name = ASSET_STRATEGY_MAP.get(symbol, "swing_combo")
+                from strategies import SYMBOL_STRATEGY_MAP, STRATEGIES
+                strategy_name = SYMBOL_STRATEGY_MAP.get(symbol, "swing_combo")
                  # Use asset-specific strategy class
                 StrategyClass = STRATEGIES.get(asset_strategy, SwingStrategy)
                 strategy = StrategyClass()
@@ -274,18 +274,29 @@ def test_all_params_for_symbol(
         t = best_result["trade_statistics"]
         r = best_result["returns"]
         rm = best_result["risk_metrics"]
-        
-        log.success(
-            f"  BEST: RSI<{best_params['rsi_buy_zone']} "
-            f"Vol>{best_params['volume_multiplier']}x "
-            f"ADX>{best_params['adx_min']} | "
-            f"Trades:{t['total_trades']} "
-            f"Win:{t['win_rate']:.0f}% "
-            f"Return:{r['total_return_pct']:.1f}% "
-            f"MaxDD:{rm['max_drawdown_pct']:.1f}% "
-            f"Sharpe:{rm['sharpe_ratio']:.2f} "
-            f"Sortino:{rm['sortino_ratio']:.2f}"
-        )
+
+        if "rsi_buy_zone" in best_params:
+            log.success(
+                f"  BEST: RSI<{best_params['rsi_buy_zone']} "
+                f"Vol>{best_params['volume_multiplier']}x "
+                f"ADX>{best_params['adx_min']} | "
+                f"Trades:{t['total_trades']} "
+                f"Win:{t['win_rate']:.0f}% "
+                f"Return:{r['total_return_pct']:.1f}% "
+                f"MaxDD:{rm['max_drawdown_pct']:.1f}% "
+                f"Sharpe:{rm['sharpe_ratio']:.2f} "
+                f"Sortino:{rm['sortino_ratio']:.2f}"
+            )
+        else:
+            log.success(
+                f"  BEST: Donchian={best_params.get('lookback_periods', 'N/A')} | "
+                f"Trades:{t['total_trades']} "
+                f"Win:{t['win_rate']:.0f}% "
+                f"Return:{r['total_return_pct']:.1f}% "
+                f"MaxDD:{rm['max_drawdown_pct']:.1f}% "
+                f"Sharpe:{rm['sharpe_ratio']:.2f} "
+                f"Sortino:{rm['sortino_ratio']:.2f}"
+            )
     else:
         log.warning(f"  No profitable parameter combination found for {symbol}")
     
@@ -359,6 +370,13 @@ def main():
     # ------------------------------------------------------------------
     log.info("Connecting to exchange for data fetch...")
     collector = DataCollector()
+    
+    # OVERRIDE: Use REAL Binance for backtest data (not Testnet)
+    # This fetches 1000+ candles from real exchange for meaningful backtesting.
+    # Scanner/OrderExecutor still uses Testnet (TRADING_MODE=paper unchanged).
+    collector.exchange.set_sandbox_mode(False)
+    collector.exchange.load_markets()
+    log.info("Backtest: Switched to REAL Binance for historical data")
     log.info("Exchange connection established.\n")
     
     # ------------------------------------------------------------------
@@ -385,7 +403,7 @@ def main():
         df = collector.fetch_ohlcv(
             symbol,
             timeframe=asset_timeframe,
-            limit=200
+            limit=BACKTEST_CANDLE_LIMIT
         )
         
         # Validate data
@@ -448,18 +466,32 @@ def main():
         r = data["result"]["returns"]
         rm = data["result"]["risk_metrics"]
         
-        row = (
-            f"{symbol:<12} "
-            f"{p['rsi_buy_zone']:>5} "
-            f"{p['volume_multiplier']:>4.1f} "
-            f"{p['adx_min']:>5} "
-            f"{t['total_trades']:>7} "
-            f"{t['win_rate']:>6.1f}% "
-            f"{r['total_return_pct']:>6.2f}% "
-            f"{rm['max_drawdown_pct']:>6.2f}% "
-            f"{rm['sharpe_ratio']:>7.2f} "
-            f"{rm['sortino_ratio']:>7.2f}"
-        )
+        if "rsi_buy_zone" in p:
+            row = (
+                f"{symbol:<12} "
+                f"{p['rsi_buy_zone']:>5} "
+                f"{p['volume_multiplier']:>4.1f} "
+                f"{p['adx_min']:>5} "
+                f"{t['total_trades']:>7} "
+                f"{t['win_rate']:>5.1f}% "
+                f"{r['total_return_pct']:>6.2f}% "
+                f"{rm['max_drawdown_pct']:>6.2f}% "
+                f"{rm['sharpe_ratio']:>7.2f} "
+                f"{rm['sortino_ratio']:>7.2f}"
+            )
+        else:
+            row = (
+                f"{symbol:<12} "
+                f"{'DON':>5} "
+                f"{'--':>4} "
+                f"{'--':>5} "
+                f"{t['total_trades']:>7} "
+                f"{t['win_rate']:>5.1f}% "
+                f"{r['total_return_pct']:>6.2f}% "
+                f"{rm['max_drawdown_pct']:>6.2f}% "
+                f"{rm['sharpe_ratio']:>7.2f} "
+                f"{rm['sortino_ratio']:>7.2f}"
+            )
         log.info(row)
     
     log.info("=" * 85)

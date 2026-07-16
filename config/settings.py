@@ -69,6 +69,8 @@ ASSET_TIMEFRAMES = {
 
 # Timeframes for swing trading
 PRIMARY_TIMEFRAME = "1h"       # Research-backed (Zhivkov & Kandilarov 2026) Main chart for signals
+# Real Binance supports 1000 candles for backtesting
+BACKTEST_CANDLE_LIMIT = 1000
 CONFIRMATION_TIMEFRAME = "1d"  # Higher timeframe for trend confirmation
 
 # Base currency (what we use to buy crypto)

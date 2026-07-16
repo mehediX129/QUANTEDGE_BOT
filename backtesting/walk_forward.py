@@ -52,7 +52,8 @@ def walk_forward_analysis(
     
     # Step 1: Fetch data
     collector = DataCollector()
-    df = collector.fetch_ohlcv(symbol, timeframe=PRIMARY_TIMEFRAME, limit=limit)
+    from config.settings import BACKTEST_CANDLE_LIMIT
+    df = collector.fetch_ohlcv(symbol, timeframe=PRIMARY_TIMEFRAME, limit=BACKTEST_CANDLE_LIMIT)
     
     if df is None or len(df) < 100:
         log.error(f"Insufficient data for {symbol}")
